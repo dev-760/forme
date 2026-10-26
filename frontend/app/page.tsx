@@ -12,7 +12,8 @@ import {
   SlidersHorizontal, Sparkles, Sun, Upload, X,
 } from "lucide-react";
 
-const API = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1").replace(/\/$/, "");
+const PRIMARY_API = (process.env.NEXT_PUBLIC_API_BASE_URL || "https://wardrowbe-api-chi.vercel.app/api/v1").replace(/\/$/, "");
+const FALLBACK_API = "https://wardrowbe-api-chi.vercel.app/api/v1";
 const OCCASIONS = ["casual","office","work","formal","smart-casual","business-casual","date","party","sporty","sport","outdoor","travel","lounge","beach","interview","wedding","dinner","brunch","gym","running","hiking","weekend"];
 const CATEGORIES: Record<string, string[]> = {
   tops: ["shirt","t-shirt","top","sweater","hoodie","polo","blouse","tank-top"],
@@ -79,9 +80,28 @@ async function api<T>(path:string, token:string, init:RequestInit={}) : Promise<
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${token}`);
   if (!(init.body instanceof FormData) && init.body != null) headers.set("Content-Type", "application/json");
-  let response:Response;
-  try { response = await fetch(`${API}${path}`, { ...init, headers }); }
-  catch { throw new Error("Could not reach the wardrobe service. Check the backend URL and try again."); }
+
+  const endpoints = [PRIMARY_API];
+  if (PRIMARY_API !== FALLBACK_API) endpoints.push(FALLBACK_API);
+
+  let response: Response | undefined;
+  let lastError: unknown;
+
+  for (const endpoint of endpoints) {
+    try {
+      response = await fetch(`${endpoint}${path}`, { ...init, headers });
+      if (response.status < 500) {
+        break;
+      }
+    } catch (e) {
+      lastError = e;
+    }
+  }
+
+  if (!response) {
+    throw new Error("Could not reach the wardrobe service. Check your connection and try again.");
+  }
+
   if (!response.ok) {
     const body = await response.json().catch(()=>({}));
     if(response.status===401)void signOut({callbackUrl:"/login"});
@@ -270,7 +290,21 @@ export default function HomePage() {
   },[token,pathname,request]);
 
   useEffect(()=>{if(status==="authenticated"&&token)void load()},[status,token,load]);
-  useEffect(()=>{fetch(`${API}/health/features`).then(r=>r.ok?r.json():null).then(d=>{if(typeof d?.max_upload_size_mb==="number")setMaxUpload(d.max_upload_size_mb)}).catch(()=>{})},[]);
+  useEffect(() => {
+    const fetchFeatures = async () => {
+      for (const ep of [PRIMARY_API, FALLBACK_API]) {
+        try {
+          const r = await fetch(`${ep}/health/features`);
+          if (r.ok) {
+            const d = await r.json();
+            if (typeof d?.max_upload_size_mb === "number") setMaxUpload(d.max_upload_size_mb);
+            break;
+          }
+        } catch {}
+      }
+    };
+    void fetchFeatures();
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -351,7 +385,24 @@ export default function HomePage() {
       </div>
     </main>
   );
-  if(syncError)return <main className="auth-loading"><div className="error-card"><FormeMark size={38}/><h2>Account connection failed</h2><p>{syncError}</p><button className="button primary" onClick={()=>signOut()}>Return to sign in</button></div></main>;
+  if (syncError)
+    return (
+      <main className="auth-loading">
+        <div className="error-card">
+          <FormeMark size={38} />
+          <h2>Account connection failed</h2>
+          <p>{syncError}</p>
+          <div style={{ display: "flex", gap: "0.75rem", marginTop: "1.25rem", justifyContent: "center" }}>
+            <button className="button primary" onClick={() => window.location.reload()}>
+              Retry connection
+            </button>
+            <button className="button secondary" onClick={() => signOut()}>
+              Return to sign in
+            </button>
+          </div>
+        </div>
+      </main>
+    );
 
   return <div className="app-shell">
     <aside className={`sidebar ${mobileNav?"mobile-open":""}`}>

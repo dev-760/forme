@@ -73,7 +73,7 @@ const authOptions: NextAuthOptions = {
   session: { strategy: "jwt" },
   callbacks: {
     async jwt({ token, user, account }) {
-      if (!user && token.accessToken) return token;
+      if (!user && token.accessToken && !token.syncError) return token;
 
       // Extract account tokens
       if (account?.access_token) {
@@ -83,44 +83,64 @@ const authOptions: NextAuthOptions = {
         token.idToken = account.id_token;
       }
 
-      const api =
+      const configuredBase = (
         process.env.BACKEND_URL ||
         process.env.NEXT_PUBLIC_API_BASE_URL ||
-        "http://localhost:8000";
-      const base = api.replace(/\/api\/v1\/?$/, "").replace(/\/$/, "");
+        "https://wardrowbe-api-chi.vercel.app"
+      )
+        .replace(/\/api\/v1\/?$/, "")
+        .replace(/\/$/, "");
 
-      try {
-        const response = await fetch(`${base}/api/v1/auth/sync`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            external_id: user?.id || token.sub,
-            email: user?.email || token.email,
-            display_name:
-              user?.name ||
-              token.name ||
-              (user?.email || token.email ? String(user?.email || token.email).split("@")[0] : "Member"),
-            avatar_url: user?.image || token.picture,
-            id_token: account?.id_token || (token.idToken as string | undefined),
-          }),
-        });
+      const fallbackBase = "https://wardrowbe-api-chi.vercel.app";
+      const candidateBases = [configuredBase];
+      if (configuredBase !== fallbackBase) {
+        candidateBases.push(fallbackBase);
+      }
 
-        const result = await response.json().catch(() => ({}));
+      const syncPayload = JSON.stringify({
+        external_id: user?.id || token.sub,
+        email: user?.email || token.email,
+        display_name:
+          user?.name ||
+          token.name ||
+          (user?.email || token.email ? String(user?.email || token.email).split("@")[0] : "Member"),
+        avatar_url: user?.image || token.picture,
+        id_token: account?.id_token || (token.idToken as string | undefined),
+      });
 
-        if (response.ok && result.access_token) {
-          token.accessToken = result.access_token;
-          token.backendUserId = result.id;
-          token.syncError = undefined;
-        } else {
-          token.syncError =
-            typeof result.detail === "string"
-              ? result.detail
-              : `Account sync failed (${response.status})`;
-          // Fall back to Supabase tokens so user session is valid
-          token.accessToken = (account?.access_token || account?.id_token || token.supabaseAccessToken || token.idToken) as string;
+      let syncSuccessful = false;
+      let lastErrorMessage = "";
+
+      for (const base of candidateBases) {
+        try {
+          const response = await fetch(`${base}/api/v1/auth/sync`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: syncPayload,
+          });
+
+          const result = await response.json().catch(() => ({}));
+
+          if (response.ok && result.access_token) {
+            token.accessToken = result.access_token;
+            token.backendUserId = result.id;
+            token.syncError = undefined;
+            syncSuccessful = true;
+            break;
+          } else {
+            lastErrorMessage =
+              typeof result.detail === "string"
+                ? result.detail
+                : `Account sync failed (${response.status})`;
+          }
+        } catch {
+          lastErrorMessage = "Unable to connect to the wardrobe service.";
         }
-      } catch {
-        token.syncError = "Unable to connect to the wardrobe service.";
+      }
+
+      if (!syncSuccessful) {
+        token.syncError = lastErrorMessage || "Account sync failed";
+        // Fall back to Supabase tokens so user session is valid
         token.accessToken = (account?.access_token || account?.id_token || token.supabaseAccessToken || token.idToken) as string;
       }
 
