@@ -12,7 +12,7 @@ export default function ConsentPage() {
   const [authorizationId, setAuthorizationId] = useState<string | null>(null);
   const [user, setUser] = useState<any>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [clientName, setClientName] = useState("FORME Atelier");
+  const [clientName, setClientName] = useState("FORME");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -30,47 +30,86 @@ export default function ConsentPage() {
     }
   }, []);
 
-  // Direct REST API approval using access_token
-  const executeApprove = async (token: string, authId: string) => {
+  // Process authorization: bind authorization request to user and finalize consent
+  const processAuthorization = async (token: string, authId: string, directApprove = false) => {
     setSubmitting(true);
     setError("");
 
     try {
-      const resp = await fetch(`${SUPABASE_URL}/auth/v1/oauth/authorizations/${authId}/consent`, {
+      // Step 1: Bind authorization to authenticated user and check existing consent state
+      const detailsResp = await fetch(`${SUPABASE_URL}/auth/v1/oauth/authorizations/${authId}`, {
+        method: "GET",
+        headers: {
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const detailsData = await detailsResp.json().catch(() => ({}));
+
+      // If user has already consented or was auto-approved, redirect URL is provided immediately
+      if (detailsData.redirect_url) {
+        window.location.href = detailsData.redirect_url;
+        return;
+      }
+
+      if (!detailsResp.ok) {
+        throw new Error(
+          detailsData.msg || detailsData.error_description || detailsData.error || "Invalid authorization request"
+        );
+      }
+
+      if (detailsData.client?.name) {
+        setClientName(detailsData.client.name);
+      }
+
+      // If called from initClient and user hasn't clicked approve yet, let them view consent screen
+      if (!directApprove) {
+        setLoading(false);
+        setSubmitting(false);
+        return;
+      }
+
+      // Step 2: Explicitly approve consent
+      const consentResp = await fetch(`${SUPABASE_URL}/auth/v1/oauth/authorizations/${authId}/consent`, {
         method: "POST",
         headers: {
-          "apikey": SUPABASE_KEY,
-          "Authorization": `Bearer ${token}`,
+          apikey: SUPABASE_KEY,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ action: "approve" }),
       });
 
-      const data = await resp.json().catch(() => ({}));
+      const consentData = await consentResp.json().catch(() => ({}));
 
-      if (!resp.ok) {
-        throw new Error(data.msg || data.error_description || data.error || `Authorization failed (${resp.status})`);
+      if (consentData.redirect_url) {
+        window.location.href = consentData.redirect_url;
+        return;
       }
 
-      if (data.redirect_url) {
-        window.location.href = data.redirect_url;
-      } else {
-        throw new Error("Authorization approved, but no redirect URL was returned.");
-      }
-    } catch (err: any) {
-      // Fallback: try JS SDK approveAuthorization if direct call failed
-      const client = (window as any).__supabaseClient;
-      if (client?.auth?.oauth?.approveAuthorization) {
-        try {
-          const { data: sdkData, error: sdkErr } = await client.auth.oauth.approveAuthorization(authId);
-          if (!sdkErr && sdkData?.redirect_url) {
-            window.location.href = sdkData.redirect_url;
+      if (!consentResp.ok) {
+        // If already approved between calls, check GET once more
+        if (consentData.error_code === "validation_failed") {
+          const recheck = await fetch(`${SUPABASE_URL}/auth/v1/oauth/authorizations/${authId}`, {
+            headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}` },
+          });
+          const recheckData = await recheck.json().catch(() => ({}));
+          if (recheckData.redirect_url) {
+            window.location.href = recheckData.redirect_url;
             return;
           }
-        } catch {}
+        }
+        throw new Error(
+          consentData.msg || consentData.error_description || consentData.error || `Consent failed (${consentResp.status})`
+        );
       }
+
+      throw new Error("Authorization approved, but no redirect URL was returned.");
+    } catch (err: any) {
       setError(err.message || "Failed to authorize session.");
       setSubmitting(false);
+      setLoading(false);
     }
   };
 
@@ -83,8 +122,8 @@ export default function ConsentPage() {
         const resp = await fetch(`${SUPABASE_URL}/auth/v1/oauth/authorizations/${authId}/consent`, {
           method: "POST",
           headers: {
-            "apikey": SUPABASE_KEY,
-            "Authorization": `Bearer ${token}`,
+            apikey: SUPABASE_KEY,
+            Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ action: "deny" }),
@@ -113,16 +152,17 @@ export default function ConsentPage() {
     const authId = params.get("authorization_id");
 
     try {
-      const { data: { session } } = await client.auth.getSession();
+      const {
+        data: { session },
+      } = await client.auth.getSession();
       if (session && session.user && session.access_token) {
         setUser(session.user);
         setAccessToken(session.access_token);
 
-        if (authId && client.auth.oauth?.getAuthorizationDetails) {
-          try {
-            const { data } = await client.auth.oauth.getAuthorizationDetails(authId);
-            if (data?.client?.name) setClientName(data.client.name);
-          } catch {}
+        if (authId) {
+          // Bind session and check auto-redirect
+          await processAuthorization(session.access_token, authId, false);
+          return;
         }
       }
     } catch (e: any) {
@@ -163,8 +203,8 @@ export default function ConsentPage() {
       if (session?.access_token && authorizationId) {
         setUser(loggedUser);
         setAccessToken(session.access_token);
-        // Automatically approve and redirect immediately!
-        await executeApprove(session.access_token, authorizationId);
+        // Automatically bind authorization and finalize consent
+        await processAuthorization(session.access_token, authorizationId, true);
       } else if (loggedUser && !session) {
         setError("Please check your email to confirm registration before logging in.");
         setSubmitting(false);
@@ -240,7 +280,7 @@ export default function ConsentPage() {
               <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
                 <button
                   className="button primary full"
-                  onClick={() => authorizationId && executeApprove(accessToken, authorizationId)}
+                  onClick={() => authorizationId && processAuthorization(accessToken, authorizationId, true)}
                   disabled={submitting}
                 >
                   {submitting ? (
