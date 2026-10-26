@@ -216,6 +216,7 @@ async def create_item(
     primary_color: str | None = Form(None),
     favorite: bool = Form(False),
     skip_ai: bool = Form(False),
+    auto_remove_bg: bool = Form(True),
 ) -> ItemResponse:
     # Validate and process image
     image_service = ImageService()
@@ -251,6 +252,7 @@ async def create_item(
             user_id=current_user.id,
             image_data=content,
             original_filename=image.filename or "upload.jpg",
+            auto_remove_bg=auto_remove_bg,
         )
     except ValueError as e:
         raise HTTPException(
@@ -278,6 +280,9 @@ async def create_item(
         item_data=item_data,
         image_paths=image_paths,
     )
+    if "original_backup_path" in image_paths:
+        item.original_image_path = image_paths["original_backup_path"]
+        await db.commit()
 
     do_auto_tag = settings.effective_ai_vision_enabled and not skip_ai
 
@@ -324,6 +329,7 @@ async def bulk_create_items(
     current_user: Annotated[User, Depends(get_current_user)],
     images: list[UploadFile] = File(..., description="Multiple image files to upload"),
     skip_ai: bool = Form(False),
+    auto_remove_bg: bool = Form(True),
     upload_keys: list[str] | None = Form(
         None,
         description="Optional per-file idempotency keys, same order/length as images. "
@@ -447,6 +453,7 @@ async def bulk_create_items(
                     user_id=user_id,
                     image_data=content,
                     original_filename=filename,
+                    auto_remove_bg=auto_remove_bg,
                 )
 
                 # Create item with unknown type (AI will detect)
@@ -457,6 +464,9 @@ async def bulk_create_items(
                     image_paths=image_paths,
                     upload_key=upload_key,
                 )
+                if "original_backup_path" in image_paths:
+                    item.original_image_path = image_paths["original_backup_path"]
+                    await db.commit()
 
                 if not do_auto_tag:
                     item = await item_service.mark_pending(item, set_ready=True)

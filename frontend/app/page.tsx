@@ -6,11 +6,66 @@ import { signOut, useSession } from "next-auth/react";
 import { SettingsExtras } from "./settings/extras";
 import { FormeBrand, FormeMark } from "./components/brand";
 import {
-  Activity, Archive, ArrowRight, Check, CheckCircle2, ChevronDown,
-  CircleHelp, Cloud, CloudSun, Heart, Home, Layers3,
+  Activity, Archive, ArrowRight, Camera, Check, CheckCircle2, ChevronDown,
+  CircleHelp, Cloud, CloudSun, Heart, Home, Image as ImageIcon, Layers3,
   LoaderCircle, LogOut, Menu, Plus, Search, Settings2, Shirt,
-  SlidersHorizontal, Sparkles, Sun, Upload, X,
+  SlidersHorizontal, Sparkles, Sun, Trash2, Upload, X,
 } from "lucide-react";
+
+async function prepareImageForUpload(file: File, maxDim = 2048, quality = 0.90): Promise<File> {
+  if (typeof window === "undefined" || !file.type.startsWith("image/")) {
+    return file;
+  }
+  return new Promise<File>((resolve) => {
+    const img = new window.Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(file);
+        return;
+      }
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            resolve(file);
+            return;
+          }
+          const baseName = file.name.replace(/\.[^/.]+$/, "");
+          const optimized = new File([blob], `${baseName}.jpg`, {
+            type: "image/jpeg",
+            lastModified: Date.now(),
+          });
+          resolve(optimized.size < file.size ? optimized : file);
+        },
+        "image/jpeg",
+        quality
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(file);
+    };
+    img.src = url;
+  });
+}
 
 const API = (process.env.NEXT_PUBLIC_API_BASE_URL || "https://forme-api.hassankarasu.dev/api/v1").replace(/\/$/, "");
 const OCCASIONS = ["casual","office","work","formal","smart-casual","business-casual","date","party","sporty","sport","outdoor","travel","lounge","beach","interview","wedding","dinner","brunch","gym","running","hiking","weekend"];
@@ -240,13 +295,15 @@ export default function HomePage() {
   const [pairingsLoading,setPairingsLoading]=useState(false);
   const [mobileNav,setMobileNav]=useState(false);
   const [occasion,setOccasion]=useState("casual");
-  const [uploadFile,setUploadFile]=useState<File|null>(null);
+  const [uploadFiles,setUploadFiles]=useState<File[]>([]);
+  const [uploadProgress,setUploadProgress]=useState<{current:number;total:number;stage:string}|null>(null);
   const [dragging,setDragging]=useState(false);
   const [uploading,setUploading]=useState(false);
   const [maxUpload,setMaxUpload]=useState(50);
   const [editForm,setEditForm]=useState<any>({});
   const [saving,setSaving]=useState(false);
-  const fileRef=useRef<HTMLInputElement>(null);
+  const galleryRef=useRef<HTMLInputElement>(null);
+  const cameraRef=useRef<HTMLInputElement>(null);
   const searchRef=useRef<HTMLInputElement>(null);
 
   const request=useCallback(<T,>(path:string,init:RequestInit={})=>api<T>(path,token!,init),[token]);
@@ -301,7 +358,39 @@ export default function HomePage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const chooseFile=(file?:File)=>{if(!file)return;const supported=["image/jpeg","image/png","image/webp","image/heic","image/heif"];if(!supported.includes(file.type)){setError("Choose a JPEG, PNG, WebP, or HEIC image.");return}if(file.size>maxUpload*1024*1024){setError(`This image is larger than the ${maxUpload} MB upload limit.`);return}setError("");setUploadFile(file)};
+  const handleFiles = (fileList: FileList | null | File[]) => {
+    if (!fileList || fileList.length === 0) return;
+    const supported = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
+    const incoming = Array.from(fileList);
+    const validFiles: File[] = [];
+
+    for (const f of incoming) {
+      const ext = f.name.split(".").pop()?.toLowerCase();
+      const isSupported = supported.includes(f.type) || ["jpg", "jpeg", "png", "webp", "heic", "heif"].includes(ext || "");
+      if (!isSupported) continue;
+      if (f.size > maxUpload * 1024 * 1024) continue;
+      validFiles.push(f);
+    }
+
+    if (validFiles.length === 0) {
+      setError("Please choose JPEG, PNG, WebP, or HEIC images.");
+      return;
+    }
+
+    setError("");
+    setUploadFiles(prev => {
+      const combined = [...prev, ...validFiles];
+      if (combined.length > 50) {
+        setError("Maximum 50 photos can be cataloged at once. Added up to 50.");
+        return combined.slice(0, 50);
+      }
+      return combined;
+    });
+  };
+
+  const removeFile = (index: number) => {
+    setUploadFiles(prev => prev.filter((_, i) => i !== index));
+  };
 
   const run=async <T,>(work:()=>Promise<T>,success?:string)=>{
     setError("");setNotice("");
@@ -344,7 +433,55 @@ export default function HomePage() {
   const logItemActivity=async(kind:"wear"|"wash")=>{if(!selectedItem)return;const result=await run(()=>request<Item>(`/items/${selectedItem.id}/${kind}`,json("POST",{})),kind==="wear"?"Wear logged.":"Wash logged.");if(result){setSelectedItem(result);setPageData(d=>({...d,items:d.items?.map(i=>i.id===result.id?result:i)}))}};
   const findPairings=async()=>{if(!selectedItem)return;setPairingsLoading(true);const result=await run<any>(()=>request<any>(`/pairings/generate/${selectedItem.id}`,json("POST",{num_pairings:3})));if(result)setPairings(result.pairings||[]);setPairingsLoading(false)};
   const deleteItem=async()=>{if(!selectedItem||!window.confirm(`Remove ${title(selectedItem.name)} from your wardrobe? This cannot be undone.`))return;setError("");try{await request<void>(`/items/${selectedItem.id}`,{method:"DELETE"});setNotice("Clothing removed.");setSelectedItem(null);setPageData(d=>({...d,items:d.items?.filter(i=>i.id!==selectedItem.id),total:Math.max(0,(d.total||1)-1)}))}catch(e){setError(e instanceof Error?e.message:"Unable to remove this piece.")}};
-  const upload=async()=>{if(!uploadFile)return;setUploading(true);const form=new FormData();form.append("image",uploadFile);form.append("skip_ai","false");const item=await run(()=>request<Item>("/items",{method:"POST",body:form}),"Added to your wardrobe. AI tagging will appear as it completes.");if(item){setUploadFile(null);if(fileRef.current)fileRef.current.value="";router.push("/wardrobe");refresh()}setUploading(false)};
+  const upload = async () => {
+    if (uploadFiles.length === 0) return;
+    setUploading(true);
+    setError("");
+    setNotice("");
+
+    let successCount = 0;
+    const total = uploadFiles.length;
+
+    for (let i = 0; i < total; i++) {
+      const file = uploadFiles[i];
+      setUploadProgress({
+        current: i + 1,
+        total,
+        stage: `Cleaning background & AI tagging (${file.name})...`,
+      });
+
+      try {
+        const optimized = await prepareImageForUpload(file);
+        const form = new FormData();
+        form.append("image", optimized);
+        form.append("skip_ai", "false");
+        form.append("auto_remove_bg", "true");
+
+        await request<Item>("/items", { method: "POST", body: form });
+        successCount++;
+      } catch (err: any) {
+        console.error(`Failed to catalog ${file.name}:`, err);
+      }
+    }
+
+    setUploading(false);
+    setUploadProgress(null);
+
+    if (successCount > 0) {
+      setUploadFiles([]);
+      if (galleryRef.current) galleryRef.current.value = "";
+      if (cameraRef.current) cameraRef.current.value = "";
+      setNotice(
+        successCount === total
+          ? `Successfully added ${successCount} piece${successCount > 1 ? "s" : ""} to your wardrobe. Backgrounds removed & AI vision tagging in progress.`
+          : `Added ${successCount} of ${total} piece(s). Some items encountered issues.`
+      );
+      router.push("/wardrobe");
+      refresh();
+    } else {
+      setError("Failed to upload the selected photos. Please check your network and try again.");
+    }
+  };
   const saveSettings=async()=>{if(!profile||!preferences)return;setSaving(true);setError("");setNotice("");try{const [me,prefs]=await Promise.all([request<Profile>("/users/me",json("PATCH",{display_name:profile.display_name,location_name:profile.location_name||null,timezone:profile.timezone,locale:profile.locale}),),request<Preferences>("/users/me/preferences",json("PATCH",preferences))]);setProfile(me);setPreferences(prefs);setNotice("Preferences saved.")}catch(e){setError(e instanceof Error?e.message:"Unable to save preferences.")}finally{setSaving(false)}};
 
   if(status==="loading")return <div className="auth-loading"><FormeMark size={46}/><Busy label="Opening your atelier"/></div>;
@@ -578,58 +715,154 @@ export default function HomePage() {
         {isAdd&&<>
           <div className="page-heading">
             <div>
-              <p className="eyebrow">ARCHIVE A GARMENT</p>
+              <p className="eyebrow">ARCHIVE GARMENTS</p>
               <h1>Add <em>clothing</em></h1>
-              <p className="muted">A single photo is all it takes. FORME handles background cleanup and style tagging.</p>
+              <p className="muted">Upload up to 50 photos. FORME automatically cleans backgrounds, optimizes imagery, and extracts style attributes with AI.</p>
             </div>
             <button className="text-button" onClick={()=>router.push("/wardrobe")}>Back to wardrobe <ArrowRight size={14}/></button>
           </div>
+
+          <input
+            ref={galleryRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+            multiple
+            hidden
+            onChange={e => { handleFiles(e.target.files); if (e.target) e.target.value = ""; }}
+          />
+          <input
+            ref={cameraRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            onChange={e => { handleFiles(e.target.files); if (e.target) e.target.value = ""; }}
+          />
+
           <section
-            className={`upload-zone ${dragging?"dragging":""}`}
-            onDragOver={e=>{e.preventDefault();setDragging(true)}}
-            onDragLeave={()=>setDragging(false)}
-            onDrop={e=>{e.preventDefault();setDragging(false);chooseFile(e.dataTransfer.files?.[0])}}
+            className={`upload-zone ${dragging ? "dragging" : ""} ${uploadFiles.length > 0 ? "has-files" : ""}`}
+            onDragOver={e => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={e => { e.preventDefault(); setDragging(false); handleFiles(e.dataTransfer.files); }}
           >
-            <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" capture="environment" hidden onChange={e=>chooseFile(e.target.files?.[0])}/>
-            {uploadFile ? (
-              <div className="upload-preview">
-                <img src={URL.createObjectURL(uploadFile)} alt="Selected clothing"/>
-                <div>
-                  <span className="soft-badge">Ready to catalog</span>
-                  <strong>{uploadFile.name}</strong>
-                  <small>{(uploadFile.size/1024/1024).toFixed(2)} MB</small>
-                  <div className="upload-preview-actions">
-                    <button className="button secondary" onClick={()=>fileRef.current?.click()}>Replace photo</button>
-                    <button className="text-button danger-text" onClick={()=>{setUploadFile(null);if(fileRef.current)fileRef.current.value=""}}>Remove</button>
+            {uploadFiles.length > 0 ? (
+              <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "1rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "0 4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span className="soft-badge">{uploadFiles.length} / 50 piece{uploadFiles.length > 1 ? "s" : ""} selected</span>
+                    <small className="muted">Total ~{(uploadFiles.reduce((acc, f) => acc + f.size, 0) / (1024 * 1024)).toFixed(1)} MB</small>
                   </div>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button
+                      type="button"
+                      className="button secondary small"
+                      onClick={() => galleryRef.current?.click()}
+                      disabled={uploading || uploadFiles.length >= 50}
+                    >
+                      <Plus size={13} /> Add more photos
+                    </button>
+                    <button
+                      type="button"
+                      className="text-button danger-text"
+                      onClick={() => { setUploadFiles([]); if (galleryRef.current) galleryRef.current.value = ""; }}
+                      disabled={uploading}
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                </div>
+
+                <div className="upload-multi-grid">
+                  {uploadFiles.map((file, idx) => (
+                    <div key={`${file.name}-${idx}`} className="upload-thumb-card">
+                      <img src={URL.createObjectURL(file)} alt={file.name} />
+                      <span className="thumb-badge">{(file.size / (1024 * 1024)).toFixed(1)}MB</span>
+                      {!uploading && (
+                        <button
+                          type="button"
+                          className="thumb-remove"
+                          title="Remove photo"
+                          onClick={e => {
+                            e.stopPropagation();
+                            removeFile(idx);
+                          }}
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+
+                  {uploadFiles.length < 50 && !uploading && (
+                    <button
+                      type="button"
+                      className="upload-add-tile"
+                      onClick={() => galleryRef.current?.click()}
+                      title="Add more photos"
+                    >
+                      <Plus size={20} />
+                      <span>Add photo</span>
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (
               <>
                 <span className="upload-icon"><Upload size={22}/></span>
-                <h2>Drop a clothing photo here</h2>
-                <p className="muted">A clear image of a single garment against a simple surface works best</p>
-                <button className="button primary" onClick={()=>fileRef.current?.click()}>Choose a photo</button>
-                <span className="file-hint">JPEG, PNG, WebP or HEIC · up to {maxUpload} MB</span>
+                <h2>Upload clothing photos</h2>
+                <p className="muted">Select up to 50 garments from your photo library or take a photo</p>
+                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", justifyContent: "center", marginTop: "4px" }}>
+                  <button type="button" className="button primary" onClick={() => galleryRef.current?.click()}>
+                    <ImageIcon size={15} /> Choose from Photos (up to 50)
+                  </button>
+                  <button type="button" className="button secondary" onClick={() => cameraRef.current?.click()}>
+                    <Camera size={15} /> Take a Photo
+                  </button>
+                </div>
+                <span className="file-hint">JPEG, PNG, WebP or HEIC · Max 50 items · Canvas-optimized before upload</span>
               </>
             )}
           </section>
+
+          {uploadProgress && (
+            <div className="upload-progress-container">
+              <div className="upload-progress-bar-bg">
+                <div
+                  className="upload-progress-bar-fill"
+                  style={{ width: `${Math.round((uploadProgress.current / uploadProgress.total) * 100)}%` }}
+                />
+              </div>
+              <div className="upload-progress-label">
+                <span><strong>Piece {uploadProgress.current} of {uploadProgress.total}</strong> · {uploadProgress.stage}</span>
+                <span>{Math.round((uploadProgress.current / uploadProgress.total) * 100)}%</span>
+              </div>
+            </div>
+          )}
+
           <div className="upload-bottom">
             <div className="process-note">
               <Sparkles size={18}/>
               <span>
-                <strong>Automated AI Vision Tagging</strong>
-                <small>Category, color palette, fabric, pattern, and seasonality are extracted automatically.</small>
+                <strong>Automated Background Removal & AI Vision Tagging</strong>
+                <small>Clean studio backdrop generated automatically. Category, colors, pattern, fabric, and season detected by AI.</small>
               </span>
             </div>
-            <button className="button primary" disabled={!uploadFile||uploading} onClick={upload}>
-              {uploading?<><LoaderCircle size={15} className="spin"/> Uploading & analyzing…</>:<>Add to wardrobe <ArrowRight size={15}/></>}
+            <button
+              className="button primary"
+              disabled={uploadFiles.length === 0 || uploading}
+              onClick={upload}
+            >
+              {uploading ? (
+                <><LoaderCircle size={15} className="spin"/> Cataloging {uploadProgress ? `${uploadProgress.current}/${uploadProgress.total}` : "..."}</>
+              ) : (
+                <>Add {uploadFiles.length > 0 ? `${uploadFiles.length} piece${uploadFiles.length > 1 ? "s" : ""}` : "to wardrobe"} <ArrowRight size={15}/></>
+              )}
             </button>
           </div>
           <div className="photo-tips">
             <div><Check size={15}/> Natural, even lighting</div>
             <div><Check size={15}/> One garment per frame</div>
-            <div><Check size={15}/> Uncluttered background</div>
+            <div><Check size={15}/> Background is cleaned automatically</div>
           </div>
         </>}
 

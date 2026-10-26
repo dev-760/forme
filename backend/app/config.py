@@ -198,7 +198,7 @@ class Settings(BaseSettings):
     def strip_supabase_url_trailing_slash(cls, v: str | None) -> str | None:
         return v.rstrip("/") if isinstance(v, str) else v
     max_upload_size_mb: int = Field(default=50, ge=1)
-    max_bulk_upload_count: int = Field(default=20)
+    max_bulk_upload_count: int = Field(default=50)
     # Byte size is a poor proxy for decode cost: a 3.8MB JPEG can be 108MP,
     # which needs ~324MB per full-resolution RGB buffer and several exist at
     # once while variants are generated. JPEGs are drafted down before this
