@@ -111,6 +111,8 @@ def tags_to_item_fields(tags: ClothingTags, raw_response: str | None = None) -> 
         tags_jsonb["logprobs_confidence"] = tags.logprobs_confidence
 
     fields = {
+        "name": tags.name,
+        "brand": tags.brand,
         "type": tags.type,
         "subtype": tags.subtype,
         "primary_color": tags.primary_color,
@@ -316,6 +318,12 @@ async def tag_item_image(ctx: dict, item_id: str, image_path: str) -> dict[str, 
                     if was_pending:
                         setattr(item, field, value)
                 # Only update content fields if user hasn't set them (or they're default/unknown)
+                elif field == "name":
+                    if not item.name or item.name in ("Untitled piece", "Untitled"):
+                        setattr(item, field, value)
+                elif field == "brand":
+                    if not item.brand:
+                        setattr(item, field, value)
                 elif field == "type":
                     if not item.type or item.type == "unknown":
                         setattr(item, field, value)

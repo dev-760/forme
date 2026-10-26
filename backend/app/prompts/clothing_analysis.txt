@@ -2,6 +2,8 @@ OUTPUT ONLY JSON. NO TEXT. NO DESCRIPTIONS. NO EXPLANATIONS.
 
 Analyze the MAIN clothing item in this image. Use ONLY these values:
 
+NAME (required): A clear, descriptive name for the garment (3 to 6 words, title-cased), combining color, key design detail, and garment type. Examples: "Heather Grey Crewneck Sweatshirt", "Olive Green Cargo Pants", "Off-White Paisley Print Sweatshirt", "Black Slim Fit Denim Jacket".
+
 TYPE (required, pick one):
 <<TYPES>>
 
@@ -42,4 +44,4 @@ FIT (optional, pick one or null):
 slim, regular, relaxed, oversized, tailored, cropped
 
 Output this exact JSON structure (a single object, NOT wrapped in an array):
-{"type":"TYPE","subtype":null,"primary_color":"COLOR","colors":["COLOR1"],"pattern":"PATTERN","material":null,"formality":"FORMALITY","style":["STYLE1"],"season":["SEASON1","SEASON2"],"fit":null}
+{"name":"NAME","type":"TYPE","subtype":null,"primary_color":"COLOR","colors":["COLOR1"],"pattern":"PATTERN","material":null,"formality":"FORMALITY","style":["STYLE1"],"season":["SEASON1","SEASON2"],"fit":null}

@@ -40,6 +40,8 @@ class TextGenerationResult(BaseModel):
 
 
 class ClothingTags(BaseModel):
+    name: str | None = None
+    brand: str | None = None
     type: str = "unknown"
     subtype: str | None = None
     primary_color: str | None = None
@@ -476,12 +478,45 @@ class AIService:
             return ClothingTags(raw_response=response_text)
 
         if isinstance(data, list):
-            data = data[0] if data and isinstance(data[0], dict) else {}
+            if data and isinstance(data[0], dict) and ("attribute" in data[0] or "key" in data[0]):
+                flat_data = {}
+                for item in data:
+                    k = item.get("attribute") or item.get("key") or item.get("name")
+                    v = item.get("value")
+                    if k:
+                        flat_data[k] = v
+                data = flat_data
+            else:
+                data = data[0] if data and isinstance(data[0], dict) else {}
 
         tags = ClothingTags()
         tags.raw_response = response_text
+        tags.name = data.get("name") or data.get("title")
+        tags.brand = data.get("brand")
+
+        type_aliases = {
+            "tops": "top",
+            "bottoms": "pants",
+            "trousers": "pants",
+            "sweatpants": "pants",
+            "tshirt": "t-shirt",
+            "tee": "t-shirt",
+            "sweatshirt": "sweater",
+            "crewneck": "sweater",
+            "pullover": "sweater",
+            "cardigan": "sweater",
+            "polo": "shirt",
+            "hoodies": "hoodie",
+            "footwear": "shoes",
+            "shoe": "shoes",
+            "sneaker": "sneakers",
+            "boot": "boots",
+        }
 
         raw_type = data.get("type")
+        if isinstance(raw_type, str) and raw_type.lower().strip() in type_aliases:
+            raw_type = type_aliases[raw_type.lower().strip()]
+
         item_type = validate_value(raw_type, VALID_TYPES)
         if item_type:
             tags.type = item_type
@@ -503,6 +538,19 @@ class AIService:
         tags.season = validate_list(data.get("season", []), VALID_SEASONS)
         tags.fit = validate_value(data.get("fit"), VALID_FIT)
         tags.confidence = compute_tag_completeness(tags)
+
+        # Fallback title synthesis if model omitted name or named it Untitled piece
+        if not tags.name or tags.name.strip().lower() in ("untitled piece", "unknown", "untitled"):
+            name_parts = []
+            if tags.brand:
+                name_parts.append(tags.brand.title())
+            if tags.primary_color and tags.primary_color != "unknown":
+                name_parts.append(tags.primary_color.title())
+            if tags.pattern and tags.pattern not in ("solid", "unknown"):
+                name_parts.append(tags.pattern.title())
+            sub_or_type = tags.subtype or (tags.type if tags.type != "unknown" else "Piece")
+            name_parts.append(sub_or_type.replace("-", " ").title())
+            tags.name = " ".join(dict.fromkeys(name_parts)).strip() or "Garment"
 
         logger.info(
             f"Parsed tags: type={tags.type}, color={tags.primary_color}, pattern={tags.pattern}"

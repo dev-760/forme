@@ -51,7 +51,9 @@ class HttpProvider(BackgroundRemovalProvider):
 
     def remove(self, image: Image.Image) -> Image.Image:
         buf = BytesIO()
-        image.save(buf, format="PNG")
+        # Compress to high-quality JPEG (<300KB) to ensure rapid uploads and prevent serverless timeouts
+        rgb_image = image.convert("RGB") if image.mode != "RGB" else image
+        rgb_image.save(buf, format="JPEG", quality=90, optimize=True)
         buf.seek(0)
 
         headers: dict[str, str] = {}
@@ -64,7 +66,7 @@ class HttpProvider(BackgroundRemovalProvider):
                 if self.url.endswith("/remove-background")
                 else f"{self.url}/api/v1/remove-background"
             )
-            files = {"image": ("image.png", buf, "image/png")}
+            files = {"image": ("image.jpg", buf, "image/jpeg")}
             if self.api_key:
                 headers["X-API-Key"] = self.api_key
         else:
@@ -73,17 +75,23 @@ class HttpProvider(BackgroundRemovalProvider):
                 if self.url.endswith("/remove-background")
                 else f"{self.url}/api/remove-background"
             )
-            files = {"file": ("image.png", buf, "image/png")}
+            files = {"file": ("image.jpg", buf, "image/jpeg")}
 
-        with httpx.Client(timeout=120, follow_redirects=True) as client:
-            response = client.post(
-                endpoint,
-                files=files,
-                headers=headers,
-            )
-            response.raise_for_status()
-
-        return Image.open(BytesIO(response.content)).convert("RGBA")
+        try:
+            with httpx.Client(timeout=14, follow_redirects=True) as client:
+                response = client.post(
+                    endpoint,
+                    files=files,
+                    headers=headers,
+                )
+                if response.status_code == 200:
+                    return Image.open(BytesIO(response.content)).convert("RGBA")
+                else:
+                    logger.warning("Background removal HTTP provider returned %s: %s", response.status_code, response.text[:200])
+                    return image.convert("RGBA")
+        except Exception as e:
+            logger.warning("Background removal HTTP provider failed: %s, falling back to original", e)
+            return image.convert("RGBA")
 
 
 _provider: BackgroundRemovalProvider | None = None
