@@ -1,0 +1,25 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# JavaScript dependencies and build output
+node_modules/
+.next/
+out/
+dist/
+
+# Deployment and tooling output
+.vercel/
+npm-debug.log*

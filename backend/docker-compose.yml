@@ -1,0 +1,115 @@
+# =============================================================================
+# Wardrowbe Backend — Self-Hosted / Local Stack (Python 3.14 + PostgreSQL 18)
+# =============================================================================
+# Note on PostgreSQL 18 Docker volumes:
+# Official postgres:18+ images set PGDATA=/var/lib/postgresql/18/docker and
+# expect persistent volumes mounted at /var/lib/postgresql (NOT .../data).
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wardrobe}:${POSTGRES_PASSWORD:-wardrobe}@postgres:5432/${POSTGRES_DB:-wardrobe}
+  REDIS_URL: redis://redis:6379/0
+  SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+  DEBUG: ${DEBUG:-true}
+  APP_URL: ${APP_URL:-http://localhost:3000}
+  AI_INTERNAL_ENABLED: ${AI_INTERNAL_ENABLED:-true}
+  AI_BASE_URL: ${AI_BASE_URL:-https://openrouter.ai/api/v1}
+  AI_API_KEY: ${AI_API_KEY:-}
+  AI_VISION_MODEL: ${AI_VISION_MODEL:-google/gemma-4-31b-it:free,thinkingmachines/inkling:free}
+  AI_TEXT_MODEL: ${AI_TEXT_MODEL:-google/gemma-4-31b-it:free,thinkingmachines/inkling:free}
+  AI_PARALLEL_OUTFIT_GENERATION: ${AI_PARALLEL_OUTFIT_GENERATION:-true}
+  AI_TIMEOUT: ${AI_TIMEOUT:-}
+  STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+  STORAGE_PATH: /data/wardrobe
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wardrobe}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wardrobe}
+      POSTGRES_DB: ${POSTGRES_DB:-wardrobe}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-wardrobe} -d $${POSTGRES_DB:-wardrobe}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      args:
+        BG_REMOVAL_MODEL: ${BG_REMOVAL_MODEL:-u2net}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *backend-env
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - wardrobe_data:/data/wardrobe
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  worker:
+    build:
+      context: .
+      args:
+        BG_REMOVAL_MODEL: ${BG_REMOVAL_MODEL:-u2net}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *backend-env
+    volumes:
+      - wardrobe_data:/data/wardrobe
+    command: ["arq", "app.workers.settings.WorkerSettings"]
+
+  image-worker:
+    build:
+      context: .
+      args:
+        BG_REMOVAL_MODEL: ${BG_REMOVAL_MODEL:-u2net}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *backend-env
+      BG_REMOVAL_MODEL: ${BG_REMOVAL_MODEL:-u2net}
+    volumes:
+      - wardrobe_data:/data/wardrobe
+      - rembg_models:/opt/rembg/models
+    command: ["arq", "app.workers.settings.ImageWorkerSettings"]
+
+volumes:
+  pgdata:
+  redisdata:
+  wardrobe_data:
+  rembg_models:

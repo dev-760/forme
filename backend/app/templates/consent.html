@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wardrowbe - Authorize Application</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: #0c0d0e; color: #f3f4f6; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .card { background: #17181a; border: 1px solid #2b2c30; border-radius: 16px; padding: 32px; width: 100%; max-width: 420px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+    .logo-box { width: 56px; height: 56px; background: #232428; border-radius: 14px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; }
+    .logo-dots { display: grid; grid-template-columns: repeat(2, 10px); gap: 6px; }
+    .dot { width: 10px; height: 10px; background: #fff; border-radius: 50%; }
+    h1 { font-size: 22px; font-weight: 600; text-align: center; margin-bottom: 8px; }
+    .subtitle { font-size: 14px; color: #9ca3af; text-align: center; margin-bottom: 24px; }
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-size: 13px; color: #9ca3af; margin-bottom: 6px; }
+    input { width: 100%; padding: 12px 14px; background: #232428; border: 1px solid #373940; border-radius: 10px; color: #fff; font-size: 14px; outline: none; }
+    input:focus { border-color: #6366f1; }
+    .btn { width: 100%; padding: 12px; border: none; border-radius: 10px; font-weight: 600; font-size: 14px; cursor: pointer; transition: background 0.2s; margin-top: 8px; }
+    .btn-primary { background: #ffffff; color: #000000; }
+    .btn-primary:hover { background: #e5e7eb; }
+    .btn-secondary { background: transparent; color: #9ca3af; border: 1px solid #373940; margin-top: 10px; }
+    .btn-secondary:hover { background: #232428; color: #fff; }
+    .notice { font-size: 12px; color: #6b7280; text-align: center; margin-top: 16px; }
+    .error-msg { background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; color: #f87171; padding: 10px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
+    .toggle-link { color: #60a5fa; cursor: pointer; text-decoration: underline; }
+    .client-info { background: #232428; border-radius: 10px; padding: 14px; margin-bottom: 20px; font-size: 13px; }
+    .client-name { font-weight: 600; color: #fff; }
+    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(0,0,0,0.2); border-top-color: #000; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo-box">
+      <div class="logo-dots">
+        <div class="dot"></div>
+        <div class="dot"></div>
+        <div class="dot"></div>
+      </div>
+    </div>
+    <div id="error-box" class="error-msg"></div>
+
+    <!-- State 1: Loading -->
+    <div id="loading-state">
+      <h1>Connecting...</h1>
+      <p class="subtitle">Verifying authorization request</p>
+    </div>
+
+    <!-- State 2: Login / Signup -->
+    <div id="auth-state" style="display: none;">
+      <h1 id="auth-title">Sign In</h1>
+      <p class="subtitle" id="auth-subtitle">Sign in to your Wardrowbe account to continue</p>
+      <form id="auth-form">
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" required autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" required autocomplete="current-password">
+        </div>
+        <button type="submit" id="auth-btn" class="btn btn-primary">Sign In</button>
+      </form>
+      <p class="notice" id="auth-toggle">Don't have an account? <span class="toggle-link" onclick="toggleAuthMode()">Sign up</span></p>
+    </div>
+
+    <!-- State 3: Consent Screen -->
+    <div id="consent-state" style="display: none;">
+      <h1>Authorize Access</h1>
+      <p class="subtitle">An application wants to connect to your account</p>
+      <div class="client-info">
+        <div>Connecting as: <b id="user-email" style="color: #60a5fa;"></b></div>
+        <div style="margin-top: 8px;">Application: <span id="client-name" class="client-name">Wardrowbe Mobile</span></div>
+      </div>
+      <button id="approve-btn" class="btn btn-primary" onclick="approveAuth()">Authorize Application</button>
+      <button id="deny-btn" class="btn btn-secondary" onclick="denyAuth()">Cancel</button>
+      <p class="notice">You will be redirected back to the mobile app.</p>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = "__SUPABASE_URL__";
+    const SUPABASE_KEY = "__SUPABASE_KEY__";
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const authorizationId = urlParams.get('authorization_id');
+
+    let isSignUp = false;
+
+    function showError(msg) {
+      const eb = document.getElementById('error-box');
+      eb.textContent = msg;
+      eb.style.display = 'block';
+    }
+
+    function toggleAuthMode() {
+      isSignUp = !isSignUp;
+      document.getElementById('auth-title').textContent = isSignUp ? 'Create Account' : 'Sign In';
+      document.getElementById('auth-subtitle').textContent = isSignUp ? 'Sign up to create your wardrobe' : 'Sign in to your Wardrowbe account to continue';
+      document.getElementById('auth-btn').textContent = isSignUp ? 'Sign Up' : 'Sign In';
+      document.getElementById('auth-toggle').innerHTML = isSignUp 
+        ? 'Already have an account? <span class="toggle-link" onclick="toggleAuthMode()">Sign in</span>'
+        : 'Don\'t have an account? <span class="toggle-link" onclick="toggleAuthMode()">Sign up</span>';
+    }
+
+    async function init() {
+      if (!authorizationId) {
+        document.getElementById('loading-state').style.display = 'none';
+        showError('Missing authorization_id parameter. Please start login from the Wardrowbe mobile app.');
+        return;
+      }
+
+      try {
+        const { data: { session } } = await supabaseClient.auth.getSession();
+        if (session && session.user) {
+          showConsent(session.user);
+        } else {
+          showAuth();
+        }
+      } catch (err) {
+        showAuth();
+      }
+    }
+
+    function showAuth() {
+      document.getElementById('loading-state').style.display = 'none';
+      document.getElementById('consent-state').style.display = 'none';
+      document.getElementById('auth-state').style.display = 'block';
+    }
+
+    async function showConsent(user) {
+      document.getElementById('loading-state').style.display = 'none';
+      document.getElementById('auth-state').style.display = 'none';
+      document.getElementById('consent-state').style.display = 'block';
+      document.getElementById('user-email').textContent = user.email || 'Authenticated User';
+
+      try {
+        if (supabaseClient.auth.oauth && supabaseClient.auth.oauth.getAuthorizationDetails) {
+          const { data } = await supabaseClient.auth.oauth.getAuthorizationDetails(authorizationId);
+          if (data && data.client && data.client.name) {
+            document.getElementById('client-name').textContent = data.client.name;
+          }
+        }
+      } catch (e) {
+        console.warn('Could not load extra client details', e);
+      }
+    }
+
+    document.getElementById('auth-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      document.getElementById('error-box').style.display = 'none';
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const btn = document.getElementById('auth-btn');
+      btn.disabled = true;
+      btn.textContent = isSignUp ? 'Creating account...' : 'Signing in...';
+
+      try {
+        let authRes;
+        if (isSignUp) {
+          authRes = await supabaseClient.auth.signUp({ email, password });
+        } else {
+          authRes = await supabaseClient.auth.signInWithPassword({ email, password });
+        }
+
+        if (authRes.error) {
+          showError(authRes.error.message);
+          btn.disabled = false;
+          btn.textContent = isSignUp ? 'Sign Up' : 'Sign In';
+          return;
+        }
+
+        if (authRes.data && authRes.data.user) {
+          showConsent(authRes.data.user);
+        } else {
+          showError('Please check your email to confirm registration before logging in.');
+          btn.disabled = false;
+        }
+      } catch (err) {
+        showError(err.message || 'Authentication error');
+        btn.disabled = false;
+      }
+    });
+
+    async function approveAuth() {
+      const btn = document.getElementById('approve-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>Authorizing...';
+
+      try {
+        const { data, error } = await supabaseClient.auth.oauth.approveAuthorization(authorizationId);
+        if (error) {
+          showError(error.message || 'Authorization failed');
+          btn.disabled = false;
+          btn.textContent = 'Authorize Application';
+          return;
+        }
+        if (data && data.redirect_url) {
+          window.location.href = data.redirect_url;
+        } else {
+          showError('Authorization approved, but no redirect URL was returned.');
+        }
+      } catch (err) {
+        showError(err.message || 'Approval error');
+        btn.disabled = false;
+        btn.textContent = 'Authorize Application';
+      }
+    }
+
+    async function denyAuth() {
+      const btn = document.getElementById('deny-btn');
+      btn.disabled = true;
+      try {
+        const { data } = await supabaseClient.auth.oauth.denyAuthorization(authorizationId);
+        if (data && data.redirect_url) {
+          window.location.href = data.redirect_url;
+        }
+      } catch (err) {
+        window.history.back();
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
