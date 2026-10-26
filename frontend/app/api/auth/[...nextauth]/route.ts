@@ -28,7 +28,10 @@ if (issuer && process.env.OIDC_CLIENT_ID) {
     wellKnown: `${issuer}/.well-known/openid-configuration`,
     clientId: process.env.OIDC_CLIENT_ID,
     clientSecret: isPublicClient ? undefined : rawSecret,
-    client: isPublicClient ? { token_endpoint_auth_method: "none" } : undefined,
+    client: {
+      token_endpoint_auth_method: isPublicClient ? "none" : undefined,
+      id_token_signed_response_alg: "ES256",
+    },
     authorization: { params: { scope: "openid email profile" } },
     checks: ["pkce", "state"],
     idToken: true,
