@@ -1,21 +1,45 @@
 "use client";
 import { useEffect, useState } from "react";
-import { getProviders, signIn } from "next-auth/react";
-import { Sparkles, LoaderCircle, ArrowRight, ShieldCheck, Layers3, CloudSun } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { getProviders, signIn, useSession } from "next-auth/react";
+import { Sparkles, LoaderCircle, ArrowRight, ShieldCheck, Layers3, CloudSun, AlertCircle } from "lucide-react";
 import { FormeBrand } from "../components/brand";
 
 export default function LoginPage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
   const [providers, setProviders] = useState<Record<string, { name: string }> | null>(null);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
     getProviders().then((p) => setProviders(p as any));
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const err = params.get("error");
+      if (err) {
+        if (err === "OAuthCallback") {
+          setAuthError("The authorization code exchange could not be completed. Please try again.");
+        } else if (err === "OAuthSignin") {
+          setAuthError("Could not start the authorization request. Please try again.");
+        } else {
+          setAuthError(`Sign-in was interrupted (${err}). Please try again.`);
+        }
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    if (status === "authenticated" && session) {
+      router.replace("/dashboard");
+    }
+  }, [status, session, router]);
 
   const handleOidcSignIn = () => {
     setSubmitting(true);
+    setAuthError(null);
     void signIn("oidc", { callbackUrl: "/dashboard" });
   };
 
@@ -69,7 +93,27 @@ export default function LoginPage() {
             <p className="muted">Sign in to sync your personal wardrobe and styling preferences.</p>
           </div>
 
-          {providers?.oidc && (
+          {authError && (
+            <div
+              className="login-error"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                marginBottom: "16px",
+                fontSize: "12.5px",
+              }}
+            >
+              <AlertCircle size={16} style={{ flexShrink: 0 }} />
+              <span>{authError}</span>
+            </div>
+          )}
+
+          {status === "loading" ? (
+            <div className="login-loading" style={{ margin: "24px 0" }}>
+              <LoaderCircle size={16} className="spin" /> Verifying session...
+            </div>
+          ) : providers?.oidc ? (
             <button
               className="button primary full login-cta"
               disabled={submitting}
@@ -77,7 +121,7 @@ export default function LoginPage() {
             >
               {submitting ? (
                 <>
-                  <LoaderCircle size={16} className="spin" /> Connecting...
+                  <LoaderCircle size={16} className="spin" /> Connecting to your atelier...
                 </>
               ) : (
                 <>
@@ -86,7 +130,7 @@ export default function LoginPage() {
                 </>
               )}
             </button>
-          )}
+          ) : null}
 
           {providers?.["dev-credentials"] && (
             <form
