@@ -129,6 +129,7 @@ type Profile = { id:string; email:string; display_name:string; avatar_url?:strin
 type Preferences = { default_occasion:string; color_favorites:string[]; color_avoid:string[]; temperature_unit:string; temperature_sensitivity:string; layering_preference:string; avoid_repeat_days:number; prefer_underused_items:boolean; variety_level:string; style_profile:Record<string,number> };
 type Weather = { temperature:number; condition:string; feels_like:number; precipitation_chance:number };
 type PageData = { items?:Item[]; total?:number; outfits?:Outfit[]; wardrobe?:any; color_distribution?:any[] };
+type BulkDeleteResult = { deleted:number; failed:number; next_cursor?:string|null; has_more?:boolean };
 
 async function api<T>(path:string, token:string, init:RequestInit={}) : Promise<T> {
   const headers = new Headers(init.headers);
@@ -189,7 +190,11 @@ function ItemTile({item,onOpen,onFavorite}:{item:Item;onOpen?:()=>void;onFavorit
     >
       <div className="item-photo">
         <Image src={photo(item)} alt={title(item.name)} />
-        {item.brand && <span className="item-brand-pill">{item.brand}</span>}
+        {item.brand ? (
+          <span className="item-brand-pill">{item.brand}</span>
+        ) : item.subtype ? (
+          <span className="item-brand-pill item-subtype-pill">{item.subtype}</span>
+        ) : null}
         {onFavorite && (
           <button
             className={`icon-button favorite ${item.favorite ? "selected" : ""}`}
@@ -308,6 +313,8 @@ export default function HomePage() {
   const [maxUpload,setMaxUpload]=useState(50);
   const [editForm,setEditForm]=useState<any>({});
   const [saving,setSaving]=useState(false);
+  const [showClearModal,setShowClearModal]=useState(false);
+  const [clearingWardrobe,setClearingWardrobe]=useState(false);
   const galleryRef=useRef<HTMLInputElement>(null);
   const cameraRef=useRef<HTMLInputElement>(null);
   const searchRef=useRef<HTMLInputElement>(null);
@@ -439,6 +446,30 @@ export default function HomePage() {
   const logItemActivity=async(kind:"wear"|"wash")=>{if(!selectedItem)return;const result=await run(()=>request<Item>(`/items/${selectedItem.id}/${kind}`,json("POST",{})),kind==="wear"?"Wear logged.":"Wash logged.");if(result){setSelectedItem(result);setPageData(d=>({...d,items:d.items?.map(i=>i.id===result.id?result:i)}))}};
   const findPairings=async()=>{if(!selectedItem)return;setPairingsLoading(true);const result=await run<any>(()=>request<any>(`/pairings/generate/${selectedItem.id}`,json("POST",{num_pairings:3})));if(result)setPairings(result.pairings||[]);setPairingsLoading(false)};
   const deleteItem=async()=>{if(!selectedItem||!window.confirm(`Remove ${title(selectedItem.name)} from your wardrobe? This cannot be undone.`))return;setError("");try{await request<void>(`/items/${selectedItem.id}`,{method:"DELETE"});setNotice("Clothing removed.");setSelectedItem(null);setPageData(d=>({...d,items:d.items?.filter(i=>i.id!==selectedItem.id),total:Math.max(0,(d.total||1)-1)}))}catch(e){setError(e instanceof Error?e.message:"Unable to remove this piece.")}};
+  const clearEntireWardrobe=async()=>{
+    setClearingWardrobe(true);setError("");setNotice("");
+    try {
+      let hasMore=true;
+      let nextCursor:string|undefined=undefined;
+      let totalDeleted=0;
+      while(hasMore){
+        const res:BulkDeleteResult=await request<BulkDeleteResult>("/items/bulk/delete",json("POST",{select_all:true,after_id:nextCursor}));
+        if(!res)break;
+        totalDeleted+=(res.deleted||0);
+        hasMore=!!res.has_more;
+        nextCursor=res.next_cursor||undefined;
+        if(!res.has_more||res.deleted===0)break;
+      }
+      setPageData(d=>({...d,items:[],total:0}));
+      setShowClearModal(false);
+      setNotice(totalDeleted>0?`Wardrobe cleared. Removed ${totalDeleted} piece${totalDeleted>1?"s":""} and purged studio photos.`:"Wardrobe is already empty.");
+      refresh();
+    } catch(err:any){
+      setError(err instanceof Error?err.message:"Failed to clear wardrobe.");
+    } finally {
+      setClearingWardrobe(false);
+    }
+  };
   const upload = async () => {
     if (uploadFiles.length === 0) return;
     setUploading(true);
@@ -876,10 +907,29 @@ export default function HomePage() {
           <div className="page-heading wardrobe-heading">
             <div>
               <p className="eyebrow">YOUR PERSONAL COLLECTION</p>
-              <h1>My wardrobe <span className="count-badge">{pageData.total??"—"}</span></h1>
-              <p className="muted">Every garment you own, organized and searchable.</p>
+              <h1>
+                My wardrobe <span className="count-badge">{pageData.total ?? 0}</span>
+                {(pageData.total || 0) > 0 && filteredItems.length !== (pageData.total || 0) && (
+                  <span className="count-sub-badge">({filteredItems.length} matching)</span>
+                )}
+              </h1>
+              <p className="muted">Every garment you own, organized, searchable, and AI-cataloged.</p>
             </div>
-            <button className="button primary" onClick={()=>router.push("/wardrobe/add")}><Plus size={16}/> Add clothing</button>
+            <div className="heading-actions">
+              {(pageData.total || 0) > 0 && (
+                <button
+                  type="button"
+                  className="button secondary danger-hover"
+                  onClick={() => setShowClearModal(true)}
+                  title="Clear all garments from your wardrobe"
+                >
+                  <Trash2 size={15} /> Clear wardrobe
+                </button>
+              )}
+              <button className="button primary" onClick={()=>router.push("/wardrobe/add")}>
+                <Plus size={16}/> Add clothing
+              </button>
+            </div>
           </div>
           <div className="wardrobe-toolbar">
             <label className="search-box">
@@ -892,7 +942,7 @@ export default function HomePage() {
               )}
             </label>
             <button className={`filter-button ${favoriteOnly?"filter-active":""}`} onClick={()=>setFavoriteOnly(!favoriteOnly)}>
-              <Heart size={14} fill={favoriteOnly?"currentColor":"none"}/> Favorites
+              <Heart size={14} fill={favoriteOnly?"currentColor":"none"}/> Favorites {favoritesCount > 0 && <span className="tab-count">{favoritesCount}</span>}
             </button>
             <select className="filter-select" aria-label="Filter by color" value={colorFilter} onChange={e=>setColorFilter(e.target.value)}>
               <option value="">Any color</option>
@@ -904,8 +954,8 @@ export default function HomePage() {
             </select>
             <div className="toolbar-spacer"/>
             {(category !== "all" || favoriteOnly || colorFilter || seasonFilter || search) && (
-              <button className="text-button" onClick={()=>{setCategory("all");setFavoriteOnly(false);setColorFilter("");setSeasonFilter("");setSearch("")}} title="Reset filters">
-                <SlidersHorizontal size={14}/> Reset
+              <button className="text-button filter-reset-badge" onClick={()=>{setCategory("all");setFavoriteOnly(false);setColorFilter("");setSeasonFilter("");setSearch("")}} title="Reset all filters">
+                <SlidersHorizontal size={13}/> Reset filters
               </button>
             )}
           </div>
@@ -921,16 +971,48 @@ export default function HomePage() {
             <div className="item-grid wardrobe-grid">
               {filteredItems.map(item=><ItemTile key={item.id} item={item} onOpen={()=>setSelectedItem(item)} onFavorite={toggleFavorite}/>)}
             </div>
-          ):(
-            <div className="empty-state">
-              <Shirt size={28}/>
-              <h2>{pageData.total?"Nothing matches those filters":"Your wardrobe is waiting"}</h2>
-              <p className="muted">{pageData.total?"Try broadening your search or resetting active filters.":"Add your first piece and start building a digital closet that feels like you."}</p>
-              {pageData.total?(
-                <button className="button secondary" onClick={()=>{setSearch("");setCategory("all");setFavoriteOnly(false);setColorFilter("");setSeasonFilter("")}}>Clear all filters</button>
-              ):(
-                <button className="button primary" onClick={()=>router.push("/wardrobe/add")}><Plus size={15}/> Add clothing</button>
-              )}
+          ):(pageData.total || 0) > 0 ? (
+            <div className="empty-state empty-state-filtered">
+              <div className="empty-state-icon">
+                <SlidersHorizontal size={26}/>
+              </div>
+              <h2>No pieces match active filters</h2>
+              <p className="muted">
+                {search ? `No items found matching "${search}". ` : ""}
+                {category !== "all" ? `No ${category} in this view. ` : ""}
+                {favoriteOnly ? "No items marked as favorite. " : ""}
+                Try resetting your filters to view your entire collection.
+              </p>
+              <button
+                className="button secondary"
+                onClick={()=>{setSearch("");setCategory("all");setFavoriteOnly(false);setColorFilter("");setSeasonFilter("")}}
+              >
+                <X size={14}/> Clear all filters
+              </button>
+            </div>
+          ) : (
+            <div className="empty-state empty-state-atelier">
+              <div className="empty-state-emblem">
+                <Shirt size={30} strokeWidth={1.5} />
+              </div>
+              <p className="eyebrow">DIGITAL ATELIER</p>
+              <h2>Your collection begins here</h2>
+              <p className="muted">
+                Catalog your favorite clothing in seconds. Upload up to 50 photos at once — our studio engine removes backgrounds and tags silhouettes, while our AI stylist coordinates daily outfits.
+              </p>
+              <div className="empty-state-actions">
+                <button className="button primary" onClick={()=>router.push("/wardrobe/add")}>
+                  <Plus size={16}/> Add clothing (up to 50 photos)
+                </button>
+                <button className="button secondary" onClick={()=>router.push("/stylist")}>
+                  <Sparkles size={15}/> Explore AI Stylist
+                </button>
+              </div>
+              <div className="empty-state-features">
+                <span><Check size={13}/> Studio white backdrop auto-cleanup</span>
+                <span><Check size={13}/> AI fabric, color & cut recognition</span>
+                <span><Check size={13}/> Weather-aware outfit recommendations</span>
+              </div>
             </div>
           )}
         </>}
@@ -1069,6 +1151,29 @@ export default function HomePage() {
                   <button className="button primary" onClick={saveSettings} disabled={saving}>{saving?<><LoaderCircle size={15} className="spin"/> Saving…</>:<>Save profile & preferences <Check size={15}/></>}</button>
                 </div>
               </section>
+              <section className="settings-section settings-danger-section">
+                <div className="settings-title">
+                  <div className="setting-icon setting-danger-icon"><Trash2 size={17}/></div>
+                  <div>
+                    <h2>Wardrobe archive</h2>
+                    <p className="muted">Manage your cataloged garments and studio storage.</p>
+                  </div>
+                </div>
+                <div className="settings-danger-card">
+                  <div>
+                    <strong>Clear wardrobe archive</strong>
+                    <p className="muted">Permanently deletes all {pageData.total || 0} cataloged garments and purges their studio images from Supabase Storage.</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="button secondary danger-hover"
+                    disabled={(pageData.total || 0) === 0}
+                    onClick={() => setShowClearModal(true)}
+                  >
+                    <Trash2 size={15} /> Clear wardrobe ({(pageData.total || 0)})
+                  </button>
+                </div>
+              </section>
               {token && <SettingsExtras/>}
             </div>
           ):loading?<Busy/>:(
@@ -1165,6 +1270,63 @@ export default function HomePage() {
         </div>
       </section>
     </div>}
+
+    {showClearModal && (
+      <div
+        className="modal-backdrop"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget && !clearingWardrobe) setShowClearModal(false);
+        }}
+      >
+        <section className="clear-modal-card" role="dialog" aria-modal="true" aria-label="Clear wardrobe confirmation">
+          <button
+            className="icon-button modal-close"
+            onClick={() => !clearingWardrobe && setShowClearModal(false)}
+            aria-label="Close"
+            disabled={clearingWardrobe}
+          >
+            <X size={18} />
+          </button>
+          <div className="clear-modal-icon">
+            <Trash2 size={24} />
+          </div>
+          <p className="eyebrow danger-eyebrow">DANGER ZONE</p>
+          <h2>Clear your entire wardrobe?</h2>
+          <p className="muted">
+            This will permanently delete all <strong>{pageData.total || pageData.items?.length || 0} garment{(pageData.total || 0) === 1 ? "" : "s"}</strong> and purge their studio photos from Supabase Storage. Saved outfits will no longer include these pieces.
+          </p>
+          <div className="clear-modal-notice">
+            <span>This action is permanent and cannot be undone.</span>
+          </div>
+          <div className="clear-modal-actions">
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => setShowClearModal(false)}
+              disabled={clearingWardrobe}
+            >
+              Keep my wardrobe
+            </button>
+            <button
+              type="button"
+              className="button danger"
+              onClick={clearEntireWardrobe}
+              disabled={clearingWardrobe}
+            >
+              {clearingWardrobe ? (
+                <>
+                  <LoaderCircle size={15} className="spin" /> Clearing archive…
+                </>
+              ) : (
+                <>
+                  <Trash2 size={15} /> Yes, clear wardrobe
+                </>
+              )}
+            </button>
+          </div>
+        </section>
+      </div>
+    )}
 
     <nav className="mobile-bottom-nav">
       {navigation.slice(0,5).map(({href,label,icon:Icon})=>(
