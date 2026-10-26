@@ -12,8 +12,7 @@ import {
   SlidersHorizontal, Sparkles, Sun, Upload, X,
 } from "lucide-react";
 
-const PRIMARY_API = (process.env.NEXT_PUBLIC_API_BASE_URL || "https://wardrowbe-api-chi.vercel.app/api/v1").replace(/\/$/, "");
-const FALLBACK_API = "https://wardrowbe-api-chi.vercel.app/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE_URL || "https://forme-api.hassankarasu.dev/api/v1").replace(/\/$/, "");
 const OCCASIONS = ["casual","office","work","formal","smart-casual","business-casual","date","party","sporty","sport","outdoor","travel","lounge","beach","interview","wedding","dinner","brunch","gym","running","hiking","weekend"];
 const CATEGORIES: Record<string, string[]> = {
   tops: ["shirt","t-shirt","top","sweater","hoodie","polo","blouse","tank-top"],
@@ -81,25 +80,11 @@ async function api<T>(path:string, token:string, init:RequestInit={}) : Promise<
   headers.set("Authorization", `Bearer ${token}`);
   if (!(init.body instanceof FormData) && init.body != null) headers.set("Content-Type", "application/json");
 
-  const endpoints = [PRIMARY_API];
-  if (PRIMARY_API !== FALLBACK_API) endpoints.push(FALLBACK_API);
-
-  let response: Response | undefined;
-  let lastError: unknown;
-
-  for (const endpoint of endpoints) {
-    try {
-      response = await fetch(`${endpoint}${path}`, { ...init, headers });
-      if (response.status < 500) {
-        break;
-      }
-    } catch (e) {
-      lastError = e;
-    }
-  }
-
-  if (!response) {
-    throw new Error("Could not reach the wardrobe service. Check your connection and try again.");
+  let response: Response;
+  try {
+    response = await fetch(`${API}${path}`, { ...init, headers });
+  } catch {
+    throw new Error("Could not reach the wardrobe service. Check the backend URL and try again.");
   }
 
   if (!response.ok) {
@@ -291,19 +276,12 @@ export default function HomePage() {
 
   useEffect(()=>{if(status==="authenticated"&&token)void load()},[status,token,load]);
   useEffect(() => {
-    const fetchFeatures = async () => {
-      for (const ep of [PRIMARY_API, FALLBACK_API]) {
-        try {
-          const r = await fetch(`${ep}/health/features`);
-          if (r.ok) {
-            const d = await r.json();
-            if (typeof d?.max_upload_size_mb === "number") setMaxUpload(d.max_upload_size_mb);
-            break;
-          }
-        } catch {}
-      }
-    };
-    void fetchFeatures();
+    fetch(`${API}/health/features`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (typeof d?.max_upload_size_mb === "number") setMaxUpload(d.max_upload_size_mb);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {

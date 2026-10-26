@@ -3,8 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { signOut, useSession } from "next-auth/react";
 import { Check, Clock3, Copy, LoaderCircle, Plus, Users, X } from "lucide-react";
 
-const PRIMARY_API = (process.env.NEXT_PUBLIC_API_BASE_URL || "https://wardrowbe-api-chi.vercel.app/api/v1").replace(/\/$/, "");
-const FALLBACK_API = "https://wardrowbe-api-chi.vercel.app/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE_URL || "https://forme-api.hassankarasu.dev/api/v1").replace(/\/$/, "");
 type Schedule={id:string;day_of_week:number;notification_time:string;occasion:string;enabled:boolean;notify_day_before:boolean};
 type Family={id:string;name:string;invite_code:string;members:{id:string;display_name:string;email:string;role:string}[];pending_invites:{id:string;email:string;expires_at:string}[]};
 type StylePrefs={color_favorites:string[];color_avoid:string[];style_profile:Record<string,number>};
@@ -29,16 +28,7 @@ export function SettingsExtras(){
   const request=useCallback(async<T,>(path:string,init:RequestInit={}):Promise<T>=>{
     const headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${token}`);
     if(init.body)headers.set("Content-Type","application/json");
-    const endpoints = [PRIMARY_API];
-    if (PRIMARY_API !== FALLBACK_API) endpoints.push(FALLBACK_API);
-    let response: Response | undefined;
-    for (const endpoint of endpoints) {
-      try {
-        response = await fetch(`${endpoint}${path}`, { ...init, headers });
-        if (response.status < 500) break;
-      } catch {}
-    }
-    if (!response) throw new Error("Could not reach the wardrobe service.");
+    const response=await fetch(`${API}${path}`,{...init,headers});
     if(!response.ok){const body=await response.json().catch(()=>({}));if(response.status===401)void signOut({callbackUrl:"/login"});throw new Error(typeof body.detail==="string"?body.detail:body.detail?.message||`Request failed (${response.status})`)}
     if(response.status===204)return undefined as T;
     return response.json();
