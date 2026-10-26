@@ -13,6 +13,11 @@ def _get_image_signing_key() -> bytes:
 
 
 def sign_image_url(path: str, expiry_seconds: int = DEFAULT_EXPIRY_SECONDS) -> str:
+    settings = get_settings()
+    if settings.supabase_storage_configured and settings.storage_backend in ("supabase", "auto"):
+        clean_path = path.replace("\\", "/").lstrip("/")
+        return f"{settings.supabase_url}/storage/v1/object/public/{settings.supabase_storage_bucket}/{clean_path}"
+
     expires = int(time.time()) + expiry_seconds
 
     message = f"{path}:{expires}"
@@ -20,7 +25,8 @@ def sign_image_url(path: str, expiry_seconds: int = DEFAULT_EXPIRY_SECONDS) -> s
         :32
     ]
 
-    return f"/api/v1/images/{path}?expires={expires}&sig={signature}"
+    backend_base = (getattr(settings, "backend_url", None) or "https://forme-api.hassankarasu.dev").rstrip("/")
+    return f"{backend_base}/api/v1/images/{path}?expires={expires}&sig={signature}"
 
 
 def sign_optional(path: str | None, fallback: str | None = None) -> str | None:

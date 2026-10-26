@@ -152,7 +152,12 @@ async function api<T>(path:string, token:string, init:RequestInit={}) : Promise<
 }
 const json = (method:string, body?:unknown):RequestInit => ({ method, body:body===undefined?undefined:JSON.stringify(body) });
 const title = (name?:string|null) => name || "Untitled piece";
-const photo = (item:Item|OutfitItem, large=false) => (large ? (item.image_url || item.thumbnail_url) : (item.thumbnail_url || item.image_url)) || "";
+const photo = (item:Item|OutfitItem, large=false) => {
+  const url = (large ? (item.image_url || item.thumbnail_url) : (item.thumbnail_url || item.image_url)) || "";
+  if (!url) return "";
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  return `${API.replace(/\/api\/v1\/?$/, "")}${url.startsWith("/") ? "" : "/"}${url}`;
+};
 const displayDate = new Intl.DateTimeFormat(undefined,{weekday:"long",month:"long",day:"numeric"}).format(new Date());
 const navigation = [
   { href:"/dashboard", label:"Dashboard", icon:Home },
@@ -165,6 +170,7 @@ const navigation = [
 
 function Image({src,alt="",className=""}:{src?:string;alt?:string;className?:string}) {
   const [broken,setBroken]=useState(false);
+  useEffect(()=>{ setBroken(false); }, [src]);
   if(!src||broken) return <div className={`image-fallback ${className}`} aria-label={alt}><Shirt size={26} strokeWidth={1.25}/></div>;
   return <img src={src} alt={alt} className={className} onError={()=>setBroken(true)}/>;
 }

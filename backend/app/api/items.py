@@ -280,9 +280,6 @@ async def create_item(
         item_data=item_data,
         image_paths=image_paths,
     )
-    if "original_backup_path" in image_paths:
-        item.original_image_path = image_paths["original_backup_path"]
-        await db.commit()
 
     do_auto_tag = settings.effective_ai_vision_enabled and not skip_ai
 
@@ -464,9 +461,6 @@ async def bulk_create_items(
                     image_paths=image_paths,
                     upload_key=upload_key,
                 )
-                if "original_backup_path" in image_paths:
-                    item.original_image_path = image_paths["original_backup_path"]
-                    await db.commit()
 
                 if not do_auto_tag:
                     item = await item_service.mark_pending(item, set_ready=True)

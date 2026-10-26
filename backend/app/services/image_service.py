@@ -269,7 +269,7 @@ class ImageService:
         if ext not in ALLOWED_EXTENSIONS:
             raise ValueError(f"Unsupported file type: {ext}")
 
-        def _prepare_variants() -> tuple[dict[str, tuple[str, bytes]], str, dict[str, tuple[str, bytes]]]:
+        def _prepare_variants() -> tuple[dict[str, tuple[str, bytes]], str]:
             image = self._open_bounded(image_data, ext)
 
             # iPhones (and some Android cameras) store a raw sensor image plus an EXIF
@@ -278,16 +278,9 @@ class ImageService:
             image = ImageOps.exif_transpose(image)
 
             base_name = self._generate_filename(".jpg").rsplit(".", 1)[0]
-            extra_files: dict[str, tuple[str, bytes]] = {}
 
             if auto_remove_bg:
                 try:
-                    # Save a backup of the original unedited image
-                    orig_buf = BytesIO()
-                    image.save(orig_buf, format="JPEG", quality=92)
-                    backup_rel_path = f"{user_id}/{base_name}_orig.jpg"
-                    extra_files["original_backup_path"] = (backup_rel_path, orig_buf.getvalue())
-
                     provider = background_removal.get_provider()
                     rgba_result = provider.remove(image)
 
@@ -298,7 +291,6 @@ class ImageService:
                     logger.info("Auto background removal applied successfully for upload")
                 except Exception as e:
                     logger.warning("Auto background removal skipped during upload: %s", e)
-                    extra_files.clear()
 
             encoded: dict[str, tuple[str, bytes]] = {}
             for variant in VARIANTS:
@@ -307,27 +299,24 @@ class ImageService:
                     f"{user_id}/{filename}",
                     self.encode_variant(image, variant),
                 )
-            return encoded, self._phash_of(image), extra_files
+            return encoded, self._phash_of(image)
 
-        encoded_variants, phash, extra_files = await asyncio.to_thread(_prepare_variants)
+        encoded_variants, phash = await asyncio.to_thread(_prepare_variants)
         paths: dict[str, str] = {}
-        all_uploads = {**encoded_variants, **extra_files}
 
         if self.backend == "supabase":
             async with httpx.AsyncClient(timeout=30.0) as client:
                 await asyncio.gather(
                     *(
                         self._supabase_upload_async(client, rel_path, payload)
-                        for rel_path, payload in all_uploads.values()
+                        for rel_path, payload in encoded_variants.values()
                     )
                 )
             for path_field, (rel_path, _) in encoded_variants.items():
                 paths[path_field] = rel_path
-            for path_field, (rel_path, _) in extra_files.items():
-                paths[path_field] = rel_path
         else:
             user_path = self._get_user_path(user_id)
-            for path_field, (rel_path, payload) in all_uploads.items():
+            for path_field, (rel_path, payload) in encoded_variants.items():
                 filename = rel_path.split("/", 1)[1]
                 (user_path / filename).write_bytes(payload)
                 paths[path_field] = rel_path
