@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app.models.item import ClothingItem, ItemStatus
 from app.models.outfit import FamilyOutfitRating, Outfit, OutfitItem, OutfitSource, OutfitStatus
+from app.models.preference import UserPreference
 from app.models.user import User
 from app.services.ai_service import AIResponseTruncatedError, AIService, require_internal_ai
 from app.utils.clothing import covered_regions, deduplicate_by_body_slot
@@ -198,7 +199,10 @@ class PairingService:
             )
 
         # Get user preferences for AI endpoints
-        preferences = user.preferences
+        pref_res = await self.db.execute(
+            select(UserPreference).where(UserPreference.user_id == user.id)
+        )
+        preferences = pref_res.scalar_one_or_none()
         ai_endpoints = None
         if preferences and preferences.ai_endpoints:
             ai_endpoints = preferences.ai_endpoints

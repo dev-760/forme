@@ -70,9 +70,12 @@ class WeatherOverrideRequest(BaseModel):
 
 
 def _default_occasion(user: User) -> str:
-    return stored_occasion_or_default(
-        user.preferences.default_occasion if user.preferences else None
-    )
+    try:
+        pref = getattr(user, "preferences", None)
+        default_occ = pref.default_occasion if pref else None
+    except Exception:
+        default_occ = None
+    return stored_occasion_or_default(default_occ)
 
 
 class SuggestRequest(BaseModel):

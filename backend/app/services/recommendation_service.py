@@ -729,6 +729,7 @@ class RecommendationService:
 
         outfit = Outfit(
             user_id=user.id,
+            name=outfit_data.get("headline") or f"{occasion.title()} Look",
             occasion=occasion,
             weather_data=weather.to_dict(),
             scheduled_for=scheduled_date or get_user_today(user),
@@ -824,16 +825,37 @@ class RecommendationService:
                     lat, lon, _ = geocoded
 
             if lat is None or lon is None:
-                raise ValueError("User location not set. Please set location in settings.")
-            try:
-                weather = await self.weather_service.get_current_weather(lat, lon)
-            except WeatherServiceError as e:
-                logger.error(f"Weather service failed: {e}")
-                raise ValueError(
-                    "Could not fetch weather data. Please try again or provide weather manually."
-                ) from e
+                logger.info("User location not set, using default mild weather")
+                weather = WeatherData(
+                    temperature=20.0,
+                    feels_like=20.0,
+                    condition="Clear",
+                    humidity=50,
+                    wind_speed=5.0,
+                    is_rainy=False,
+                    is_snowy=False,
+                    uv_index=3,
+                )
+            else:
+                try:
+                    weather = await self.weather_service.get_current_weather(lat, lon)
+                except WeatherServiceError as e:
+                    logger.warning(f"Weather service failed: {e}, falling back to default weather")
+                    weather = WeatherData(
+                        temperature=20.0,
+                        feels_like=20.0,
+                        condition="Clear",
+                        humidity=50,
+                        wind_speed=5.0,
+                        is_rainy=False,
+                        is_snowy=False,
+                        uv_index=3,
+                    )
 
-        preferences = user.preferences
+        pref_res = await self.db.execute(
+            select(UserPreference).where(UserPreference.user_id == user.id)
+        )
+        preferences = pref_res.scalar_one_or_none()
         drop_legwear = stays_above_hot_threshold(weather, preferences)
         context = suggestion_context(
             weather, time_of_day, preferences, getattr(user, "body_measurements", None)
