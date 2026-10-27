@@ -675,8 +675,9 @@ class AIService:
                             )
                             use_reasoning_effort = False
                             continue
-                        last_error = e
-                        logger.warning(f"HTTP error from {endpoint.name}: {e}")
+                        error_detail = e.response.text[:500] if e.response else str(e)
+                        last_error = RuntimeError(f"{endpoint.name} ({model}) HTTP {e.response.status_code}: {error_detail}")
+                        logger.warning(f"HTTP error from {endpoint.name}: {last_error}")
                     except httpx.RequestError as e:
                         last_error = e
                         logger.warning(f"Request error from {endpoint.name}: {e}")
@@ -944,8 +945,9 @@ class AIService:
                         )
                         use_reasoning_effort = False
                         continue
-                    last_error = e
-                    logger.warning(f"HTTP error from {endpoint.name}: {e}")
+                    error_detail = e.response.text[:500] if e.response else str(e)
+                    last_error = RuntimeError(f"{endpoint.name} ({endpoint.text_model}) HTTP {e.response.status_code}: {error_detail}")
+                    logger.warning(f"HTTP error from {endpoint.name}: {last_error}")
                     if attempt < self.settings.ai_max_retries - 1:
                         continue
                 except httpx.RequestError as e:
