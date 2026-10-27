@@ -128,19 +128,6 @@ async def root_status() -> dict[str, str]:
     }
 
 
-@app.get("/api/v1/debug-deploy", include_in_schema=False)
-async def debug_deploy(request: Request):
-    import os
-    return {
-        "host": request.headers.get("host"),
-        "deployment_url": os.environ.get("VERCEL_URL"),
-        "git_commit": os.environ.get("VERCEL_GIT_COMMIT_SHA"),
-        "ai_text_model": os.environ.get("AI_TEXT_MODEL"),
-        "ai_key_prefix": (os.environ.get("AI_API_KEY") or "")[:15],
-        "ai_key_suffix": (os.environ.get("AI_API_KEY") or "")[-6:],
-    }
-
-
 CONSENT_HTML_PATH = Path(__file__).resolve().parent / "templates" / "consent.html"
 
 

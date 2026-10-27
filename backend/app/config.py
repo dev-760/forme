@@ -138,6 +138,49 @@ class Settings(BaseSettings):
     ai_app_title: str | None = Field(default=None)
     ai_parallel_outfit_generation: bool = Field(default=True)
 
+    @field_validator("ai_text_model", mode="before")
+    @classmethod
+    def sanitize_ai_text_model(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v
+        disallowed = {
+            "thinkingmachines/inkling:free",
+            "google/gemma-4-31b-it:free",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        }
+        fallback = [
+            "dots-studio/dots-3-note-preview:free",
+            "nvidia/nemotron-3.5-lightning:free",
+            "nvidia/nemotron-3.5-super-vl:free",
+        ]
+        models = [m.strip() for m in v.split(",") if m.strip()]
+        cleaned = [
+            m for m in models
+            if m not in disallowed and not m.startswith("thinkingmachines/inkling")
+        ]
+        return ",".join(cleaned) if cleaned else ",".join(fallback)
+
+    @field_validator("ai_vision_model", mode="before")
+    @classmethod
+    def sanitize_ai_vision_model(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v
+        disallowed = {
+            "thinkingmachines/inkling:free",
+            "google/gemma-4-31b-it:free",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        }
+        fallback = [
+            "dots-studio/dots-3-note-preview:free",
+            "nvidia/nemotron-3.5-super-vl:free",
+        ]
+        models = [m.strip() for m in v.split(",") if m.strip()]
+        cleaned = [
+            m for m in models
+            if m not in disallowed and not m.startswith("thinkingmachines/inkling")
+        ]
+        return ",".join(cleaned) if cleaned else ",".join(fallback)
+
     @field_validator("ai_reasoning_effort", mode="before")
     @classmethod
     def normalize_reasoning_effort(cls, v: str | None) -> str | None:

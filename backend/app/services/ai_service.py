@@ -274,6 +274,24 @@ class AIEndpointConfig:
         self.enabled = enabled
 
 
+DISALLOWED_AI_MODELS = {
+    "thinkingmachines/inkling:free",
+    "google/gemma-4-31b-it:free",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+}
+
+DEFAULT_FALLBACK_TEXT_MODELS = [
+    "dots-studio/dots-3-note-preview:free",
+    "nvidia/nemotron-3.5-lightning:free",
+    "nvidia/nemotron-3.5-super-vl:free",
+]
+
+DEFAULT_FALLBACK_VISION_MODELS = [
+    "dots-studio/dots-3-note-preview:free",
+    "nvidia/nemotron-3.5-super-vl:free",
+]
+
+
 def _expand_endpoint_models(
     url: str,
     vision_model: str,
@@ -281,8 +299,22 @@ def _expand_endpoint_models(
     base_name: str,
 ) -> list[AIEndpointConfig]:
     """Expand comma-separated vision_model / text_model strings into ordered endpoints."""
-    v_models = [m.strip() for m in (vision_model or "").split(",") if m.strip()] or [vision_model]
-    t_models = [m.strip() for m in (text_model or "").split(",") if m.strip()] or [text_model]
+    raw_v = [m.strip() for m in (vision_model or "").split(",") if m.strip()]
+    v_models = [
+        m for m in raw_v
+        if m not in DISALLOWED_AI_MODELS and not m.startswith("thinkingmachines/inkling")
+    ]
+    if not v_models:
+        v_models = list(DEFAULT_FALLBACK_VISION_MODELS)
+
+    raw_t = [m.strip() for m in (text_model or "").split(",") if m.strip()]
+    t_models = [
+        m for m in raw_t
+        if m not in DISALLOWED_AI_MODELS and not m.startswith("thinkingmachines/inkling")
+    ]
+    if not t_models:
+        t_models = list(DEFAULT_FALLBACK_TEXT_MODELS)
+
     total = max(len(v_models), len(t_models))
     if total <= 1:
         return [
@@ -678,6 +710,8 @@ class AIService:
                         error_detail = e.response.text[:500] if e.response else str(e)
                         last_error = RuntimeError(f"{endpoint.name} ({model}) HTTP {e.response.status_code}: {error_detail}")
                         logger.warning(f"HTTP error from {endpoint.name}: {last_error}")
+                        if e.response.status_code in (401, 403, 404):
+                            break
                     except httpx.RequestError as e:
                         last_error = e
                         logger.warning(f"Request error from {endpoint.name}: {e}")
@@ -948,6 +982,8 @@ class AIService:
                     error_detail = e.response.text[:500] if e.response else str(e)
                     last_error = RuntimeError(f"{endpoint.name} ({endpoint.text_model}) HTTP {e.response.status_code}: {error_detail}")
                     logger.warning(f"HTTP error from {endpoint.name}: {last_error}")
+                    if e.response.status_code in (401, 403, 404):
+                        break
                     if attempt < self.settings.ai_max_retries - 1:
                         continue
                 except httpx.RequestError as e:
