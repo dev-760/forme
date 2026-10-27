@@ -277,9 +277,9 @@ class PairingService:
             logger.error(f"AI pairing generation failed: {e}")
             raise AIGenerationError(str(e)) from e
         except Exception as e:
-            logger.error(f"AI pairing generation failed: {e}")
+            logger.error(f"AI pairing generation failed: {e}", exc_info=True)
             raise AIGenerationError(
-                "AI service is not available. Check your AI endpoint configuration."
+                f"AI pairing generation error: {e}" if str(e) else "AI pairing generation error"
             ) from e
 
         # Create outfit records for each pairing

@@ -829,12 +829,15 @@ class RecommendationService:
                 weather = WeatherData(
                     temperature=20.0,
                     feels_like=20.0,
-                    condition="Clear",
                     humidity=50,
+                    precipitation_chance=0,
+                    precipitation_mm=0.0,
                     wind_speed=5.0,
-                    is_rainy=False,
-                    is_snowy=False,
-                    uv_index=3,
+                    condition="Clear",
+                    condition_code=0,
+                    is_day=True,
+                    uv_index=3.0,
+                    timestamp=datetime.now(UTC),
                 )
             else:
                 try:
@@ -844,12 +847,15 @@ class RecommendationService:
                     weather = WeatherData(
                         temperature=20.0,
                         feels_like=20.0,
-                        condition="Clear",
                         humidity=50,
+                        precipitation_chance=0,
+                        precipitation_mm=0.0,
                         wind_speed=5.0,
-                        is_rainy=False,
-                        is_snowy=False,
-                        uv_index=3,
+                        condition="Clear",
+                        condition_code=0,
+                        is_day=True,
+                        uv_index=3.0,
+                        timestamp=datetime.now(UTC),
                     )
 
         pref_res = await self.db.execute(
@@ -1197,6 +1203,8 @@ class RecommendationService:
 
             return outfits
 
+        except (InsufficientWardrobeError, ValueError):
+            raise
         except AIRecommendationError:
             raise
         except AIResponseTruncatedError as e:
@@ -1206,9 +1214,9 @@ class RecommendationService:
             logger.error(f"AI recommendation failed: {e}")
             raise AIRecommendationError(str(e)) from e
         except Exception as e:
-            logger.error(f"AI recommendation failed: {e}")
+            logger.error(f"AI recommendation failed: {e}", exc_info=True)
             raise AIRecommendationError(
-                "AI service is not available. Please check your AI endpoint configuration in Settings."
+                f"AI recommendation error: {e}" if str(e) else "AI recommendation service error"
             ) from e
 
     async def generate_recommendation(
